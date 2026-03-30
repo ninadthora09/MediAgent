@@ -1,5 +1,5 @@
 import os
-from dotenv import load_dotenv
+
 from langchain_groq import ChatGroq
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain import agents
@@ -8,7 +8,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage
 from tools import check_slots, book_appointment, cancel_appointment
 
-load_dotenv()
 
 # ---------- Step 1: Wrap tools for LangChain ----------
 
