@@ -1,16 +1,13 @@
 import os
 import resend
-from dotenv import load_dotenv
 
-load_dotenv()
-
-resend.api_key = os.getenv("RESEND_API_KEY")
+resend.api_key = os.environ.get("RESEND_API_KEY")
 
 def send_confirmation_email(to_email: str, patient_name: str,
                              doctor_name: str, slot_date: str, slot_time: str):
     try:
         response = resend.Emails.send({
-            "from": "MediAgent <onboarding@resend.dev>",
+            "from": "MediAgent <noreply@yourdomain.com>",
             "to": to_email,
             "subject": "Appointment Confirmed — MediAgent",
             "html": f"""
@@ -40,6 +37,8 @@ def send_confirmation_email(to_email: str, patient_name: str,
             """
         })
         print(f"Email sent successfully. ID: {response['id']}")
+        return response
 
     except Exception as e:
         print(f"Email failed: {e}")
+        return None
