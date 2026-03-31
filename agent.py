@@ -1,95 +1,11 @@
 import os
-
-from langchain_groq import ChatGroq
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain import agents
-from langchain.tools import tool
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage, HumanMessage
+from groq import Groq
 from tools import check_slots, book_appointment, cancel_appointment
 
+# Initialize Groq client
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-# ---------- Step 1: Wrap tools for LangChain ----------
-
-@tool
-def check_slots_tool(doctor_name: str, slot_date: str) -> str:
-    """
-    Check available appointment slots for a doctor on a specific date.
-    Use this when the patient asks about availability.
-    Input date format must be YYYY-MM-DD.
-    """
-    return check_slots(doctor_name, slot_date)
-
-
-@tool
-def book_appointment_tool(patient_name: str, patient_email: str,
-                           doctor_name: str, slot_date: str, slot_time: str) -> str:
-    """
-    Book an appointment for a patient with a doctor.
-    Use this when the patient confirms they want to book a slot.
-    Input date format must be YYYY-MM-DD.
-    Input time format must match exactly as shown in available slots.
-    Always collect patient name and email before booking.
-    """
-    return book_appointment(patient_name, patient_email, doctor_name, slot_date, slot_time)
-
-
-@tool
-def cancel_appointment_tool(appointment_id: int) -> str:
-    """
-    Cancel an existing appointment using the appointment ID.
-    Use this when the patient wants to cancel their booking.
-    Always confirm the appointment ID before cancelling.
-    """
-    return cancel_appointment(appointment_id)
-
-
-# ---------- Step 2: Setup LLM ----------
-
-llm = ChatGroq(
-    api_key=os.getenv("GROQ_API_KEY"),
-    model="llama-3.1-8b-instant",
-    temperature=0
-)
-
-
-# ---------- Step 3: Setup Prompt ----------
-
-prompt = ChatPromptTemplate.from_messages([
-    ("system", """
-You are MediAgent, a helpful and professional AI assistant for a healthcare clinic.
-Your job is to help patients book, check, and cancel appointments.
-
-Rules:
-- Always be polite and professional
-- Before booking, always ask for patient name and email if not provided
-- If a requested slot is not available, always suggest alternatives using check_slots_tool
-- Date format is always YYYY-MM-DD
-- If you are unsure about anything, ask the patient to clarify
-- After booking, always confirm the appointment details back to the patient
-"""),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad"),
-])
-
-
-# ---------- Step 4: Create Agent ----------
-
-tools = [check_slots_tool, book_appointment_tool, cancel_appointment_tool]
-
-agent = create_tool_calling_agent(llm, tools, prompt)
-
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=tools,
-    verbose=True,
-    handle_parsing_errors=True
-)
-
-
-# ---------- Step 5: Chat function with memory ----------
-
+# In-memory chat history
 chat_histories = {}
 
 def chat(session_id: str, user_message: str) -> str:
@@ -98,13 +14,62 @@ def chat(session_id: str, user_message: str) -> str:
 
     history = chat_histories[session_id]
 
-    response = agent_executor.invoke({
-        "input": user_message,
-        "chat_history": history
-    })
+    message_lower = user_message.lower()
 
-    # Update history
-    history.append(HumanMessage(content=user_message))
-    history.append(AIMessage(content=response["output"]))
+    # ---------- TOOL CALLING LOGIC ----------
 
-    return response["output"]
+    try:
+        # Check slots
+        if "slot" in message_lower or "available" in message_lower:
+            # VERY basic extraction (can improve later)
+            return "Please provide doctor name and date (YYYY-MM-DD) to check availability."
+
+        # Book appointment
+        elif "book" in message_lower or "appointment" in message_lower:
+            return "Please provide your name, email, doctor name, date (YYYY-MM-DD), and time."
+
+        # Cancel appointment
+        elif "cancel" in message_lower:
+            return "Please provide your appointment ID to cancel."
+
+    except Exception as e:
+        print("Tool error:", e)
+
+    # ---------- GROQ RESPONSE ----------
+
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": """You are MediAgent, a helpful healthcare assistant.
+You help users book, check, and cancel appointments.
+Always be polite and professional."""
+            }
+        ]
+
+        # Add history
+        for msg in history:
+            messages.append(msg)
+
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": user_message
+        })
+
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages
+        )
+
+        reply = response.choices[0].message.content
+
+        # Save to history
+        history.append({"role": "user", "content": user_message})
+        history.append({"role": "assistant", "content": reply})
+
+        return reply
+
+    except Exception as e:
+        print("Groq error:", e)
+        return "Sorry, something went wrong. Please try again."
